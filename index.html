@@ -34,11 +34,26 @@
             transform: translate(-50%, -50%);
             pointer-events: none; /* Щоб не блокувати взаємодію */
         }
-        #results {
+        #results, #settings {
             margin-top: 20px;
             padding: 15px;
             border: 1px solid #ccc;
             background-color: #f9f9f9;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+            text-align: left;
+        }
+        #settings input {
+            width: 100px;
+            padding: 5px;
+            margin-left: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -54,10 +69,22 @@
     
     <canvas id="canvasElement"></canvas>
 
+    <div id="settings">
+        <h3>⚙️ Налаштування</h3>
+        <label for="meterConstant">
+            Постійна лічильника (імп./кВт⋅год):
+            <input type="number" id="meterConstant" value="1000" min="1" step="1">
+        </label>
+        <p style="font-size: small; color: #666;">(Зазвичай 1000, 1600, 3200 або 6400)</p>
+        <button id="resetButton">🔄 Скинути Лічильник</button>
+    </div>
+    
     <div id="results">
+        <h3>📊 Результати</h3>
         <p><strong>Яскравість (Debug):</strong> <span id="currentBrightness">0</span></p>
         <p><strong>Кількість імпульсів:</strong> <span id="pulseCount">0</span></p>
         <p><strong>Час між імпульсами (мс):</strong> <span id="pulseTime">--</span></p>
+        <p><strong>Вимірювана Потужність (кВт):</strong> <span id="currentPower">--</span></p>
     </div>
 
     <script>
@@ -73,13 +100,51 @@
         const brightnessDisplay = document.getElementById('currentBrightness');
         const countDisplay = document.getElementById('pulseCount');
         const timeDisplay = document.getElementById('pulseTime');
+        const powerDisplay = document.getElementById('currentPower'); // Новий елемент
         const roiOverlay = document.getElementById('roiOverlay');
-
+        const resetButton = document.getElementById('resetButton'); // Новий елемент
+        const meterConstantInput = document.getElementById('meterConstant'); // Новий елемент
+        
         // --- Змінні для логіки ---
         let pulseCount = 0;
         let isDebouncing = false;
         let lastPulseTime = 0;
+        let audioContext = null; // Для звукового сигналу
+
+        // --- Функція для відтворення короткого "піску" ---
+        function playBeep() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            oscillator.type = 'sine'; // Тип хвилі
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // Частота A4
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // Гучність
+
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.05); // Коротка тривалість
+        }
         
+        // --- Функція Скидання Результатів ---
+        function resetResults() {
+            pulseCount = 0;
+            lastPulseTime = 0;
+            countDisplay.textContent = 0;
+            timeDisplay.textContent = '--';
+            powerDisplay.textContent = '--';
+            alert('Лічильник скинуто!');
+        }
+        
+        // Прив'язка кнопки скидання
+        resetButton.addEventListener('click', resetResults);
+
+
         // --- 1. Ініціалізація Камери ---
         async function setupCamera() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -109,7 +174,7 @@
             }
         }
 
-        // --- 2. Цикл Аналізу Кадрів ---
+        // --- 2. Цикл Аналізу Кадрів (Без змін) ---
         function analyzeFrame() {
             if (video.paused || video.ended) return;
 
@@ -152,7 +217,7 @@
             requestAnimationFrame(analyzeFrame);
         }
 
-        // --- 3. Функція Детектування Імпульсу ---
+        // --- 3. Функція Детектування Імпульсу (Оновлена) ---
         function detectPulse(currentBrightness) {
             // Якщо яскравість перевищує поріг І ми не в стані затримки:
             if (currentBrightness > THRESHOLD && !isDebouncing) {
@@ -161,12 +226,25 @@
                 pulseCount++;
                 countDisplay.textContent = pulseCount;
 
+                playBeep(); // Відтворюємо звуковий сигнал
+
                 const currentTime = Date.now();
                 
                 if (lastPulseTime !== 0) {
                     const timeDiff = currentTime - lastPulseTime;
                     timeDisplay.textContent = timeDiff;
-                    // Тут можна було б обчислити потужність
+
+                    // --- Розрахунок Потужності (кВт) ---
+                    // Потужність (кВт) = (3 600 000 мс/год) / (Час між імпульсами в мс * Постійна лічильника імп./кВт⋅год)
+                    
+                    const meterConstant = parseFloat(meterConstantInput.value);
+                    
+                    if (!isNaN(meterConstant) && meterConstant > 0) {
+                        const powerKW = 3600000 / (timeDiff * meterConstant);
+                        powerDisplay.textContent = powerKW.toFixed(3); // Показуємо з трьома знаками після коми
+                    } else {
+                        powerDisplay.textContent = "Помилка константи";
+                    }
                 }
                 
                 lastPulseTime = currentTime;
