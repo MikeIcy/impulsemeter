@@ -2,271 +2,123 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Детектор Імпульсів Лічильника</title>
+    <title>Калькулятор Потужності за Імпульсами</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 0;
             padding: 20px;
-            text-align: center;
+            max-width: 600px;
+            margin: auto;
+            background-color: #f4f4f9;
         }
-        #videoElement {
-            width: 100%;
-            max-width: 400px;
-            transform: scaleX(-1); /* Дзеркальне відображення для зручності */
+        .container {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        label {
             display: block;
-            margin: 0 auto;
-            border: 2px solid #333;
+            margin-bottom: 5px;
+            font-weight: bold;
         }
-        #canvasElement {
-            display: none; /* Приховуємо canvas, він використовується лише для обробки */
-        }
-        #roiOverlay {
-            position: absolute;
-            width: 50px; /* Зона інтересу */
-            height: 50px;
-            border: 2px solid red;
-            background-color: rgba(255, 0, 0, 0.2);
-            /* Позиціонування центру (потрібно буде уточнити в JS) */
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none; /* Щоб не блокувати взаємодію */
-        }
-        #results, #settings {
-            margin-top: 20px;
-            padding: 15px;
+        input[type="number"] {
+            width: 95%;
+            padding: 10px;
+            margin-bottom: 20px;
             border: 1px solid #ccc;
-            background-color: #f9f9f9;
-            max-width: 400px;
-            margin-left: auto;
-            margin-right: auto;
-            text-align: left;
-        }
-        #settings input {
-            width: 100px;
-            padding: 5px;
-            margin-left: 10px;
+            border-radius: 4px;
         }
         button {
+            background-color: #007bff;
+            color: white;
             padding: 10px 15px;
-            font-size: 16px;
+            border: none;
+            border-radius: 4px;
             cursor: pointer;
-            margin-top: 10px;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .formula {
+            font-size: 1.1em;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .result-box {
+            margin-top: 25px;
+            padding: 15px;
+            border-top: 2px solid #28a745;
+            background-color: #d4edda;
+            color: #155724;
+            border-radius: 4px;
+            font-size: 1.2em;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
 
-    <h2>⚡ Детектор Імпульсів (Браузер)</h2>
-    <p>Наведіть червону рамку на світлодіод лічильника.</p>
+    <div class="container">
+        <h2>Калькулятор Потужності (P)</h2>
 
-    <div style="position: relative; display: inline-block;">
-        <video id="videoElement" autoplay playsinline></video>
-        <div id="roiOverlay"></div>
-    </div>
-    
-    <canvas id="canvasElement"></canvas>
+        <div class="formula">
+            **Базова формула:** $P\ [\text{kW}] = \frac{3600}{C \cdot \Delta t}$
+        </div>
 
-    <div id="settings">
-        <h3>⚙️ Налаштування</h3>
-        <label for="meterConstant">
-            Постійна лічильника (імп./кВт⋅год):
-            <input type="number" id="meterConstant" value="1000" min="1" step="1">
-        </label>
-        <p style="font-size: small; color: #666;">(Зазвичай 1000, 1600, 3200 або 6400)</p>
-        <button id="resetButton">🔄 Скинути Лічильник</button>
-    </div>
-    
-    <div id="results">
-        <h3>📊 Результати</h3>
-        <p><strong>Яскравість (Debug):</strong> <span id="currentBrightness">0</span></p>
-        <p><strong>Кількість імпульсів:</strong> <span id="pulseCount">0</span></p>
-        <p><strong>Час між імпульсами (мс):</strong> <span id="pulseTime">--</span></p>
-        <p><strong>Вимірювана Потужність (кВт):</strong> <span id="currentPower">--</span></p>
+        <div>
+            <label for="meterConstant">Постійна лічильника ($C$, імп/кВт·год):</label>
+            <input type="number" id="meterConstant" value="3200" placeholder="Наприклад, 3200">
+        </div>
+
+        <div>
+            <label for="pulseInterval">Міжімпульсний інтервал ($\Delta t$, секунди):</label>
+            <input type="number" id="pulseInterval" value="3" placeholder="Наприклад, 3">
+        </div>
+
+        <button onclick="calculatePower()">Розрахувати Потужність</button>
+
+        <div id="result" class="result-box" style="display: none;">
+            Потужність споживання: <span id="powerKw"></span>
+        </div>
     </div>
 
     <script>
-        // --- Налаштування ---
-        const THRESHOLD = 100; // Поріг яскравості для виявлення імпульсу (0-255). Регулюйте!
-        const DEBOUNCE_DELAY = 500; // Затримка (мс) після виявлення імпульсу, щоб уникнути подвійного спрацьовування
-        const ROI_SIZE = 50; // Розмір зони інтересу (пікселі в середині кадру)
+        function calculatePower() {
+            // Отримуємо значення з полів введення
+            const C = parseFloat(document.getElementById('meterConstant').value);
+            const deltaT = parseFloat(document.getElementById('pulseInterval').value);
+            const resultBox = document.getElementById('result');
+            const powerKwSpan = document.getElementById('powerKw');
 
-        // --- Елементи DOM ---
-        const video = document.getElementById('videoElement');
-        const canvas = document.getElementById('canvasElement');
-        const ctx = canvas.getContext('2d');
-        const brightnessDisplay = document.getElementById('currentBrightness');
-        const countDisplay = document.getElementById('pulseCount');
-        const timeDisplay = document.getElementById('pulseTime');
-        const powerDisplay = document.getElementById('currentPower'); // Новий елемент
-        const roiOverlay = document.getElementById('roiOverlay');
-        const resetButton = document.getElementById('resetButton'); // Новий елемент
-        const meterConstantInput = document.getElementById('meterConstant'); // Новий елемент
-        
-        // --- Змінні для логіки ---
-        let pulseCount = 0;
-        let isDebouncing = false;
-        let lastPulseTime = 0;
-        let audioContext = null; // Для звукового сигналу
-
-        // --- Функція для відтворення короткого "піску" ---
-        function playBeep() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-
-            oscillator.type = 'sine'; // Тип хвилі
-            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // Частота A4
-            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // Гучність
-
-            oscillator.start();
-            oscillator.stop(audioContext.currentTime + 0.05); // Коротка тривалість
-        }
-        
-        // --- Функція Скидання Результатів ---
-        function resetResults() {
-            pulseCount = 0;
-            lastPulseTime = 0;
-            countDisplay.textContent = 0;
-            timeDisplay.textContent = '--';
-            powerDisplay.textContent = '--';
-            alert('Лічильник скинуто!');
-        }
-        
-        // Прив'язка кнопки скидання
-        resetButton.addEventListener('click', resetResults);
-
-
-        // --- 1. Ініціалізація Камери ---
-        async function setupCamera() {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { 
-                            facingMode: "environment", // Використовувати задню камеру
-                            width: 640,
-                            height: 480
-                        } 
-                    });
-                    video.srcObject = stream;
-                    video.play();
-                    video.onloadedmetadata = () => {
-                        // Розмір Canvas повинен відповідати розміру відео
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        // Запускаємо цикл аналізу після завантаження відео
-                        requestAnimationFrame(analyzeFrame);
-                    };
-                } catch (err) {
-                    alert('Помилка доступу до камери: ' + err);
-                    console.error('Помилка доступу до камери:', err);
-                }
-            } else {
-                alert('Ваш браузер не підтримує MediaDevices API.');
-            }
-        }
-
-        // --- 2. Цикл Аналізу Кадрів (Без змін) ---
-        function analyzeFrame() {
-            if (video.paused || video.ended) return;
-
-            // 1. Копіюємо поточний кадр на canvas
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // 2. Визначаємо координати ROI (центр кадру)
-            const roiX = (canvas.width / 2) - (ROI_SIZE / 2);
-            const roiY = (canvas.height / 2) - (ROI_SIZE / 2);
-
-            // Оновлюємо позицію червоної рамки для користувача
-            roiOverlay.style.left = `${(roiX / video.videoWidth) * 100}%`;
-            roiOverlay.style.top = `${(roiY / video.videoHeight) * 100}%`;
-
-            // 3. Отримуємо дані пікселів в ROI
-            const imageData = ctx.getImageData(roiX, roiY, ROI_SIZE, ROI_SIZE);
-            const data = imageData.data;
-
-            // 4. Обчислюємо середню яскравість (Grayscale)
-            let totalBrightness = 0;
-            const numPixels = ROI_SIZE * ROI_SIZE;
-            
-            for (let i = 0; i < data.length; i += 4) {
-                // R, G, B компоненти
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                // Формула для перетворення на Grayscale (яскравість)
-                const brightness = (0.299 * r + 0.587 * g + 0.114 * b);
-                totalBrightness += brightness;
+            // Перевірка на коректність введення
+            if (isNaN(C) || isNaN(deltaT) || C <= 0 || deltaT <= 0) {
+                powerKwSpan.textContent = "Будь ласка, введіть додатні числа.";
+                resultBox.style.display = 'block';
+                return;
             }
 
-            const averageBrightness = totalBrightness / numPixels;
-            brightnessDisplay.textContent = averageBrightness.toFixed(2);
+            // Виконання розрахунку за формулою: P [kW] = 3600 / (C * deltaT)
+            const P_kw = 3600 / (C * deltaT);
 
-            // 5. Логіка виявлення імпульсу
-            detectPulse(averageBrightness);
+            // Округлення до 3 знаків після коми для зручності
+            const P_kw_rounded = P_kw.toFixed(3);
 
-            // Повторюємо на наступному кадрі
-            requestAnimationFrame(analyzeFrame);
+            // Розрахунок у Ваттах (P * 1000)
+            const P_watt = (P_kw * 1000).toFixed(0);
+
+            // Виведення результату
+            powerKwSpan.innerHTML = `**${P_kw_rounded} кВт** (або ${P_watt} Вт)`;
+            resultBox.style.display = 'block';
         }
 
-        // --- 3. Функція Детектування Імпульсу (Оновлена) ---
-        function detectPulse(currentBrightness) {
-            // Якщо яскравість перевищує поріг І ми не в стані затримки:
-            if (currentBrightness > THRESHOLD && !isDebouncing) {
-                
-                // --- Знайдено імпульс! ---
-                pulseCount++;
-                countDisplay.textContent = pulseCount;
-
-                playBeep(); // Відтворюємо звуковий сигнал
-
-                const currentTime = Date.now();
-                
-                if (lastPulseTime !== 0) {
-                    const timeDiff = currentTime - lastPulseTime;
-                    timeDisplay.textContent = timeDiff;
-
-                    // --- Розрахунок Потужності (кВт) ---
-                    // Потужність (кВт) = (3 600 000 мс/год) / (Час між імпульсами в мс * Постійна лічильника імп./кВт⋅год)
-                    
-                    const meterConstant = parseFloat(meterConstantInput.value);
-                    
-                    if (!isNaN(meterConstant) && meterConstant > 0) {
-                        const powerKW = 3600000 / (timeDiff * meterConstant);
-                        powerDisplay.textContent = powerKW.toFixed(3); // Показуємо з трьома знаками після коми
-                    } else {
-                        powerDisplay.textContent = "Помилка константи";
-                    }
-                }
-                
-                lastPulseTime = currentTime;
-
-                // Запобігаємо подвійному спрацьовуванню (Дебоунсинг)
-                isDebouncing = true;
-                
-                // Тимчасово змінюємо колір рамки для візуального підтвердження
-                roiOverlay.style.borderColor = 'green';
-                roiOverlay.style.backgroundColor = 'rgba(0, 255, 0, 0.4)';
-
-                setTimeout(() => {
-                    isDebouncing = false;
-                    roiOverlay.style.borderColor = 'red';
-                    roiOverlay.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
-                }, DEBOUNCE_DELAY);
-            }
-        }
-
-        // Запускаємо додаток
-        setupCamera();
-
+        // Запускаємо розрахунок при завантаженні сторінки зі значеннями за замовчуванням
+        calculatePower(); 
     </script>
 
 </body>
