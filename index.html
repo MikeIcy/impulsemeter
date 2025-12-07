@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Детектор Імпульсів Лічильника</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        #videoElement {
+            width: 100%;
+            max-width: 400px;
+            transform: scaleX(-1); /* Дзеркальне відображення для зручності */
+            display: block;
+            margin: 0 auto;
+            border: 2px solid #333;
+        }
+        #canvasElement {
+            display: none; /* Приховуємо canvas, він використовується лише для обробки */
+        }
+        #roiOverlay {
+            position: absolute;
+            width: 50px; /* Зона інтересу */
+            height: 50px;
+            border: 2px solid red;
+            background-color: rgba(255, 0, 0, 0.2);
+            /* Позиціонування центру (потрібно буде уточнити в JS) */
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none; /* Щоб не блокувати взаємодію */
+        }
+        #results {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>⚡ Детектор Імпульсів (Браузер)</h2>
+    <p>Наведіть червону рамку на світлодіод лічильника.</p>
+
+    <div style="position: relative; display: inline-block;">
+        <video id="videoElement" autoplay playsinline></video>
+        <div id="roiOverlay"></div>
+    </div>
+    
+    <canvas id="canvasElement"></canvas>
+
+    <div id="results">
+        <p><strong>Яскравість (Debug):</strong> <span id="currentBrightness">0</span></p>
+        <p><strong>Кількість імпульсів:</strong> <span id="pulseCount">0</span></p>
+        <p><strong>Час між імпульсами (мс):</strong> <span id="pulseTime">--</span></p>
+    </div>
+
+    <script>
+        // --- Налаштування ---
+        const THRESHOLD = 100; // Поріг яскравості для виявлення імпульсу (0-255). Регулюйте!
+        const DEBOUNCE_DELAY = 500; // Затримка (мс) після виявлення імпульсу, щоб уникнути подвійного спрацьовування
+        const ROI_SIZE = 50; // Розмір зони інтересу (пікселі в середині кадру)
+
+        // --- Елементи DOM ---
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('canvasElement');
+        const ctx = canvas.getContext('2d');
+        const brightnessDisplay = document.getElementById('currentBrightness');
+        const countDisplay = document.getElementById('pulseCount');
+        const timeDisplay = document.getElementById('pulseTime');
+        const roiOverlay = document.getElementById('roiOverlay');
+
+        // --- Змінні для логіки ---
+        let pulseCount = 0;
+        let isDebouncing = false;
+        let lastPulseTime = 0;
+        
+        // --- 1. Ініціалізація Камери ---
+        async function setupCamera() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            facingMode: "environment", // Використовувати задню камеру
+                            width: 640,
+                            height: 480
+                        } 
+                    });
+                    video.srcObject = stream;
+                    video.play();
+                    video.onloadedmetadata = () => {
+                        // Розмір Canvas повинен відповідати розміру відео
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        // Запускаємо цикл аналізу після завантаження відео
+                        requestAnimationFrame(analyzeFrame);
+                    };
+                } catch (err) {
+                    alert('Помилка доступу до камери: ' + err);
+                    console.error('Помилка доступу до камери:', err);
+                }
+            } else {
+                alert('Ваш браузер не підтримує MediaDevices API.');
+            }
+        }
+
+        // --- 2. Цикл Аналізу Кадрів ---
+        function analyzeFrame() {
+            if (video.paused || video.ended) return;
+
+            // 1. Копіюємо поточний кадр на canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // 2. Визначаємо координати ROI (центр кадру)
+            const roiX = (canvas.width / 2) - (ROI_SIZE / 2);
+            const roiY = (canvas.height / 2) - (ROI_SIZE / 2);
+
+            // Оновлюємо позицію червоної рамки для користувача
+            roiOverlay.style.left = `${(roiX / video.videoWidth) * 100}%`;
+            roiOverlay.style.top = `${(roiY / video.videoHeight) * 100}%`;
+
+            // 3. Отримуємо дані пікселів в ROI
+            const imageData = ctx.getImageData(roiX, roiY, ROI_SIZE, ROI_SIZE);
+            const data = imageData.data;
+
+            // 4. Обчислюємо середню яскравість (Grayscale)
+            let totalBrightness = 0;
+            const numPixels = ROI_SIZE * ROI_SIZE;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // R, G, B компоненти
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                // Формула для перетворення на Grayscale (яскравість)
+                const brightness = (0.299 * r + 0.587 * g + 0.114 * b);
+                totalBrightness += brightness;
+            }
+
+            const averageBrightness = totalBrightness / numPixels;
+            brightnessDisplay.textContent = averageBrightness.toFixed(2);
+
+            // 5. Логіка виявлення імпульсу
+            detectPulse(averageBrightness);
+
+            // Повторюємо на наступному кадрі
+            requestAnimationFrame(analyzeFrame);
+        }
+
+        // --- 3. Функція Детектування Імпульсу ---
+        function detectPulse(currentBrightness) {
+            // Якщо яскравість перевищує поріг І ми не в стані затримки:
+            if (currentBrightness > THRESHOLD && !isDebouncing) {
+                
+                // --- Знайдено імпульс! ---
+                pulseCount++;
+                countDisplay.textContent = pulseCount;
+
+                const currentTime = Date.now();
+                
+                if (lastPulseTime !== 0) {
+                    const timeDiff = currentTime - lastPulseTime;
+                    timeDisplay.textContent = timeDiff;
+                    // Тут можна було б обчислити потужність
+                }
+                
+                lastPulseTime = currentTime;
+
+                // Запобігаємо подвійному спрацьовуванню (Дебоунсинг)
+                isDebouncing = true;
+                
+                // Тимчасово змінюємо колір рамки для візуального підтвердження
+                roiOverlay.style.borderColor = 'green';
+                roiOverlay.style.backgroundColor = 'rgba(0, 255, 0, 0.4)';
+
+                setTimeout(() => {
+                    isDebouncing = false;
+                    roiOverlay.style.borderColor = 'red';
+                    roiOverlay.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+                }, DEBOUNCE_DELAY);
+            }
+        }
+
+        // Запускаємо додаток
+        setupCamera();
+
+    </script>
+
+</body>
+</html>
